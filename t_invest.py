@@ -1,6 +1,5 @@
 import os
 from datetime import datetime, timezone, timedelta
-# some changes
 
 import pandas as pd
 
@@ -24,7 +23,7 @@ with Client(TOKEN) as client:
         accounts = client.users.get_accounts().accounts
         broker_account_info = [acc for acc in accounts if acc.type == 1][0].__dict__
 
-        '''Все позиции в портфеле'''
+        # Все позиции в портфеле
         important_columns_positions = ['ticker', 'instrument_uid', 'figi', 'instrument_type', 'quantity', 'quantity_lots',
                              'average_position_price', 'expected_yield', 'current_nkd', 'current_price']
         positions_list = client.operations.get_portfolio(account_id=broker_account_info['id']).positions
@@ -32,7 +31,7 @@ with Client(TOKEN) as client:
 
         # print(pd.DataFrame(my_positions))
 
-        '''Названия позиций'''
+        # Названия позиций
         instruments_uids = [x['instrument_uid'] for x in my_positions]
         positions_names = {}
         for uid in instruments_uids:
@@ -42,26 +41,23 @@ with Client(TOKEN) as client:
         for pos in my_positions:
                 pos['name'] = positions_names.get(pos['instrument_uid'])
 
-
         # a = client.instruments.get_bond_coupons(instrument_id='93d49733-cde2-4832-afd7-2274b4dcd96e').events[0] # облигация floating
         # print(a.pay_one_bond, a.coupon_type, a.coupon_date)
 
-        '''
-        Инфо по облигациям
-        Купонов в год, дата погашения, номинал, сектор, валюта
-        ========================================================
-        Купоны
-        Дата ближайшего купона, тип купона, сумма купона
-        Дата предыдущего купона, тип купона, сумма купона
-        '''
+        # Инфо по облигациям
+        # Купонов в год, дата погашения, номинал, сектор, валюта
+        # ========================================================
+        # Купоны
+        # Дата ближайшего купона, тип купона, сумма купона
+        # Дата предыдущего купона, тип купона, сумма купона
+
         # bonds_uids = [x['instrument_uid'] for x in my_positions if x['instrument_type'] == 'bond']
         # bonds_and_coupons_info = {}
         # for b in bonds_uids:
-        #         '''Облигации'''
+        #         # Облигации
         #         bond = client.instruments.bond_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID,
         #                                          id=b).instrument
-        #
-        #         '''Купоны. Следующий и предыдущий'''
+        #         # Купоны. Следующий и предыдущий
         #         next_coupon = None
         #         for nc in client.instruments.get_bond_coupons(instrument_id=b).events:
         #                 if nc.coupon_date < today:
@@ -76,8 +72,10 @@ with Client(TOKEN) as client:
         #                 if previous_coupon is None or pc.coupon_date > previous_coupon.coupon_date:
         #                         previous_coupon = pc
         #
-        #         '''Добавляю информацию в словарь об облигациях и купонах'''
+        #         # Добавляю информацию в словарь об облигациях и купонах
         #         bond_and_coupons_data = {
+        #             'bond_figi': bond.figi,
+        #             'bond_ticker': bond.ticker,
         #             'coupon_quantity_per_year': bond.coupon_quantity_per_year,
         #             'maturity_date': bond.maturity_date,
         #             'nominal': bond.nominal,
@@ -91,56 +89,74 @@ with Client(TOKEN) as client:
         #             'previous_coupon_type': previous_coupon.coupon_type if previous_coupon else None
         #         }
         #         bonds_and_coupons_info[bond.figi] = bond_and_coupons_data
+        #
+        # for x in bonds_and_coupons_info:
+        #     print(pd.DataFrame([bonds_and_coupons_info[x]]))
+        #     print(my_positions)
+        #     print(bond)
+        #     break
+        # print(pd.DataFrame(bonds_and_coupons_info))
 
-        # print(bonds_and_coupons_info)
+        # Операции по счету
+
+        print(client.operations.get_operations(
+            account_id=broker_account_info['id'],  # ID счёта (обязательно)
+            from_=datetime(2026, 5, 1),  # с какой даты
+            to=datetime(2026, 6, 21),  # по какую дату
+        #     state=...,  # OperationState — статус операции
+            figi='BBG01MVSHPP3'  # figi конкретного инструмента
+        )
+        )
+
+        # '''
+        # Акции
+        # Валюта, сектор
+        # ================
+        # Дивиденды
+        # Дата ближайших дивидендов, сумма дивидендов, регулярность выплат, доход
+        # Дата предыдущих дивидендов, сумма дивидендов, регулярность выплат, доход
+        # '''
+        # share_uids = [x['instrument_uid'] for x in my_positions if x['instrument_type'] == 'share']
+        # shares_and_dividends_info = {}
+        # for s in share_uids:
+        #         '''Акции'''
+        #         share = client.instruments.share_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID,
+        #                                          id=s).instrument
+        #         '''Дивиденды. Следующий и предыдущий'''
+        #         next_div = None
+        #         for ndiv in client.instruments.get_dividends(from_= today, to= today + timedelta(days=90),
+        #                                                      instrument_id=s).dividends:
+        #             if next_div is None:
+        #                 next_div = ndiv
+        #             if next_div is not None and ndiv.payment_date < next_div.payment_date:
+        #                 next_div = ndiv
+        #
+        #         prev_div = None
+        #         for pdiv in client.instruments.get_dividends(from_= today - timedelta(days=365), to= today,
+        #                                                      instrument_id=s).dividends:
+        #             if prev_div is None:
+        #                 prev_div = pdiv
+        #             if prev_div is not None and pdiv.payment_date > prev_div.payment_date:
+        #                 prev_div = pdiv
+        #
+        #         '''Добавляю информацию в словарь об акциях и дивидендах'''
+        #         shares_and_dividends_data = {
+        #             'currency': share.currency,
+        #             'sector': share.sector,
+        #             'next_div_payment_date':next_div.payment_date if next_div else None,
+        #             'next_div_dividend_net':next_div.dividend_net if next_div else None,
+        #             'next_div_regularity':next_div.regularity if next_div else None,
+        #             'next_div_yield_value':next_div.yield_value if next_div else None,
+        #             'previous_div_payment_date': prev_div.payment_date if prev_div else None,
+        #             'previous_div_dividend_net': prev_div.dividend_net if prev_div else None,
+        #             'previous_div_regularity': prev_div.regularity if prev_div else None,
+        #             'previous_div_yield_value': prev_div.yield_value if prev_div else None
+        #         }
+        #         shares_and_dividends_info[share.figi] = shares_and_dividends_data
+        # print(shares_and_dividends_info)
 
 
-        '''
-        Акции
-        Валюта, сектор
-        ================
-        Дивиденды
-        Дата ближайших дивидендов, сумма дивидендов, регулярность выплат, доход
-        Дата предыдущих дивидендов, сумма дивидендов, регулярность выплат, доход
-        '''
-        share_uids = [x['instrument_uid'] for x in my_positions if x['instrument_type'] == 'share']
-        shares_and_dividends_info = {}
-        for s in share_uids:
-                '''Акции'''
-                share = client.instruments.share_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID,
-                                                 id=s).instrument
-                '''Дивиденды. Следующий и предыдущий'''
-                next_div = None
-                for ndiv in client.instruments.get_dividends(from_= today, to= today + timedelta(days=90),
-                                                             instrument_id=s).dividends:
-                    if next_div is None:
-                        next_div = ndiv
-                    if next_div is not None and ndiv.payment_date < next_div.payment_date:
-                        next_div = ndiv
 
-                prev_div = None
-                for pdiv in client.instruments.get_dividends(from_= today - timedelta(days=365), to= today,
-                                                             instrument_id=s).dividends:
-                    if prev_div is None:
-                        prev_div = pdiv
-                    if prev_div is not None and pdiv.payment_date > prev_div.payment_date:
-                        prev_div = pdiv
-
-                '''Добавляю информацию в словарь об акциях и дивидендах'''
-                shares_and_dividends_data = {
-                    'currency': share.currency,
-                    'sector': share.sector,
-                    'next_div_payment_date':next_div.payment_date if next_div else None,
-                    'next_div_dividend_net':next_div.dividend_net if next_div else None,
-                    'next_div_regularity':next_div.regularity if next_div else None,
-                    'next_div_yield_value':next_div.yield_value if next_div else None,
-                    'previous_div_payment_date': prev_div.payment_date if prev_div else None,
-                    'previous_div_dividend_net': prev_div.dividend_net if prev_div else None,
-                    'previous_div_regularity': prev_div.regularity if prev_div else None,
-                    'previous_div_yield_value': prev_div.yield_value if prev_div else None
-                }
-                shares_and_dividends_info[share.figi] = shares_and_dividends_data
-        print(shares_and_dividends_info)
         # for pos in my_positions:
         #         if pos['instrument_type'] == 'bond':
         #                 pos['coupon_date'] = coupons_info.get(pos['figi'])['coupon_date']
