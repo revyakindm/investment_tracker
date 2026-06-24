@@ -143,9 +143,9 @@ with Client(TOKEN) as client:
             # dat_weekday = dat.weekday()
             bonds_and_coupons_info[figi]['should_be_paid'] = 0 if diff_days is None or diff_days < 1 else 1
 
-        #=========================
-        # ПРОДОЛЖИТЬ ОТСЮДА
-        #=========================
+        #====================================
+        # ПРОДОЛЖИТЬ ОТСЮДА. БЫЛА ЛИ ВЫПЛАТА
+        #====================================
         for figi in bonds_and_coupons_info:
             bond_operations = client.operations.get_operations(
                 account_id=broker_account_info['id'],  # ID счёта (обязательно)
