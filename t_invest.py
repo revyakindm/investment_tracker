@@ -82,8 +82,8 @@ with Client(TOKEN) as client:
                     'bond_figi': bond.figi,
                     'bond_ticker': bond.ticker,
                     'coupon_quantity_per_year': bond.coupon_quantity_per_year,
-                    'maturity_date': bond.maturity_date,
-                    'nominal': bond.nominal,
+                    'maturity_date': bond.maturity_date.date(),
+                    'nominal': float(str(bond.nominal.units) + '.' + str(bond.nominal.nano//6)),
                     'sector': bond.sector,
                     'currency': bond.currency,
                     'next_coupon_date': next_coupon.coupon_date if next_coupon else None,
@@ -158,9 +158,14 @@ with Client(TOKEN) as client:
             # print(bonds_and_coupons_info[x])
             for x in bond_operations:
                 # print(x)
-                # if x.type == 'Выплата купонов' and x.state.OPERATION_STATE_EXECUTED == 1:
-                    # print(x)
-            break
+                # break
+                # print(x)
+                if x.type == 'Выплата купонов' and x.state.OPERATION_STATE_EXECUTED == 1:
+                    bonds_and_coupons_info[figi]['paid_amount'] = x.payment
+                else:
+                    bonds_and_coupons_info[figi]['paid_amount'] = 0
+
+        print(bonds_and_coupons_info)
 
 
 
