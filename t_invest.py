@@ -22,6 +22,16 @@ year_2025 = datetime(2025, 1, 1, tzinfo=timezone.utc)
 # instruments, operations, users
 
 with Client(TOKEN) as client:
+        # составляю все поля для каждой таблицы
+        bonds_columns = ['figi', 'ticker', 'instrument_uid', 'instrument_type', 'bond_name', 'nominal',
+                         'currency', 'sector', 'maturity_date', 'coupon_quantity_per_year', 'first_purchase_date',
+                         'is_in_portfolio', 'created_at_utc', 'updated_at_utc']
+
+        coupon_columns = ['bond_figi', 'coupon_date', 'coupon_type', 'pay_per_bond']
+
+        portfolio_columns = ['snapshot_date', 'bond_figi', 'quantity', 'average_price', 'current_nkd',
+                             'expected_yield', 'current_price']
+
         # Загружаем все аккаунты
         accounts = client.users.get_accounts().accounts
 
@@ -29,146 +39,180 @@ with Client(TOKEN) as client:
         broker_account_info = [acc for acc in accounts if acc.type == 1][0].__dict__
 
         # Все позиции в портфеле
-        important_columns_positions = ['ticker', 'instrument_uid', 'figi', 'instrument_type', 'quantity', 'quantity_lots',
-                             'average_position_price', 'expected_yield', 'current_nkd', 'current_price']
-        positions_list = client.operations.get_portfolio(account_id=broker_account_info['id']).positions
-        my_positions = [{col: getattr(pos, col, None) for col in important_columns_positions} for pos in positions_list]
+        # important_columns_positions = ['ticker', 'instrument_uid', 'figi', 'instrument_type', 'quantity', 'quantity_lots',
+        #                      'average_position_price', 'expected_yield', 'current_nkd', 'current_price']
+        bonds = {}
+        for pos in client.operations.get_portfolio(account_id=broker_account_info['id']).positions:
+            temp_dct = {}
+            for col in bonds_columns:
+                if pos.__dict__.get(col) is not None:
+                    temp_dct[col] = pos.__dict__.get(col)
+            bonds[pos.figi] = temp_dct
+            break
 
-        # Достаю названия позиций в портфеле
-        instruments_uids = [x['instrument_uid'] for x in my_positions]
-        positions_names = {}
-        for uid in instruments_uids:
-                positions_names[uid] = client.instruments\
-                                        .get_instrument_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID
-                                                           , id=uid).instrument.name
-
-        # Кладу названия в словарь с позициями
-        for pos in my_positions:
-                pos['name'] = positions_names.get(pos['instrument_uid'])
-
-
-        # a = client.instruments.get_bond_coupons(instrument_id='93d49733-cde2-4832-afd7-2274b4dcd96e').events # облигация floating
-        # print(a)#a.pay_one_bond, a.coupon_type, a.coupon_date)
-
-        # Облигации
-        # Купонов в год, дата погашения, номинал, сектор, валюта
-        # ========================================================
-        # Купоны
-        # Дата ближайшего купона, тип купона, сумма купона
-        # Дата предыдущего купона, тип купона, сумма купона
-
-        bonds_uids = [x['instrument_uid'] for x in my_positions if x['instrument_type'] == 'bond']
-        bonds_and_coupons_info = {}
-        for b in bonds_uids:
-                # Облигации
-                bond = client.instruments.bond_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID,
-                                                 id=b).instrument
-                # Купоны. Следующий и предыдущий
-                next_coupon = None
-                for nc in client.instruments.get_bond_coupons(instrument_id=b).events:
-                        if nc.coupon_date < today:
-                                continue
-                        if next_coupon is None or nc.coupon_date < next_coupon.coupon_date:
-                                next_coupon = nc
-
-                previous_coupon = None
-                for pc in client.instruments.get_bond_coupons(instrument_id=b).events:
-                        if pc.coupon_date > today:
-                                continue
-                        if previous_coupon is None or pc.coupon_date > previous_coupon.coupon_date:
-                                previous_coupon = pc
-
-                def _parse_money_value(mv):
-                    if mv is not None:
-                        return mv.units + mv.nano / 1e9
-                    else:
-                        return mv
-
-                # Добавляю информацию в словарь об облигациях и купонах
-                bond_and_coupons_data = {
-                    'bond_figi': bond.figi,
-                    'bond_ticker': bond.ticker,
-                    'coupon_quantity_per_year': bond.coupon_quantity_per_year,
-                    'maturity_date': bond.maturity_date.date(),
-                    'nominal': _parse_money_value(bond.nominal),
-                    'sector': bond.sector,
-                    'currency': bond.currency,
-                    'next_coupon_date': next_coupon.coupon_date.date() if next_coupon else None,
-                    'next_pay_one_bond': _parse_money_value(next_coupon.pay_one_bond if next_coupon else None),
-                    'next_coupon_type': next_coupon.coupon_type.name if next_coupon else None,
-                    'previous_coupon_date': previous_coupon.coupon_date.date() if previous_coupon else None,
-                    'previous_pay_one_bond': _parse_money_value(previous_coupon.pay_one_bond if previous_coupon
-                                                                else None),
-                    'previous_coupon_type': previous_coupon.coupon_type.name if previous_coupon else None
-                }
-                bonds_and_coupons_info[bond.figi] = bond_and_coupons_data
-
-        # Дата первой покупки облигаций
-        bond_first_purchase = {}
-        for figi in bonds_and_coupons_info:
-            bond_operations = client.operations.get_operations(
-                account_id=broker_account_info['id'],  # ID счёта (обязательно)
-                from_=year_2025,  # с какой даты
-                to=today,  # по какую дату
-                figi=bonds_and_coupons_info[figi]['bond_figi']  # figi конкретного инструмента
-            ).operations
-            for op in bond_operations:
-                if op.type == 'Покупка ценных бумаг' and op.operation_type.OPERATION_TYPE_BUY == 15:
-                    bond_first_purchase.setdefault(figi, []).append(op.date)
-            bond_first_purchase[figi] = min(bond_first_purchase[figi]).date()
-        # print(bond_first_purchase['BBG01MVSHPP3'])
-
-        # Создаю/обновляю json с датами первых покупок облигаций
-        json_path = r'C:/Users/Дмитрий/Desktop/investment_tracker/bond_first_purchase.json'
-        if os.path.exists(json_path):
-            with open(json_path, 'r') as f:
-                json_data = json.load(f)
-
-            for k, v in bond_first_purchase.items():
-                if k not in json_data:
-                    json_data[k] = v
-
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(json_data, f, indent=4, ensure_ascii=False, default=str)
-        else:
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(bond_first_purchase, f, indent=4, ensure_ascii=False, default=str)
-
-        # Добавляю в инфо об облигациях и купонах даты первых покупок и должна ли была пройти выплата
-        with open(json_path, 'r') as f:
-            json_data = json.load(f)
-
-        for figi, dat in json_data.items():
-            # Даты первых покупок
-            dat = datetime.strptime(dat, '%Y-%m-%d').date()
-            bonds_and_coupons_info[figi]['first_purchase_date'] = dat
-
-            # Должна ли быть выплата по предыдущему купону
-            diff_days = (bonds_and_coupons_info[figi]['previous_coupon_date'] - dat).days\
-                if bonds_and_coupons_info[figi]['previous_coupon_date'] else None
-            bonds_and_coupons_info[figi]['should_be_paid'] = 0 if diff_days is None or diff_days < 1 else 1
-
-        # Были ли выплата в течение 7 дней после назначенной даты
-        for figi in bonds_and_coupons_info:
-            # По-умолчанию проставляю у всех 0
-            bonds_and_coupons_info[figi]['paid_amount'] = 0
-
-            # Если предыдущая выплата существовала, то указываю, сколько было выплачено. Если не было, то 0 по-умолчанию
-            if bonds_and_coupons_info[figi]['previous_coupon_date']:
-                bond_operations = client.operations.get_operations(
-                    account_id=broker_account_info['id'],  # ID счёта (обязательно)
-                    from_=datetime.combine(bonds_and_coupons_info[figi]['previous_coupon_date'],
-                                           datetime.min.time()),  # с какой даты
-                    to=datetime.combine(bonds_and_coupons_info[figi]['previous_coupon_date'] + timedelta(days=7),
-                                        datetime.min.time()),  # по какую дату
-                    figi=bonds_and_coupons_info[figi]['bond_figi']  # figi конкретного инструмента
-                ).operations
-
-                for x in bond_operations:
-                    if x.type == 'Выплата купонов' and x.state.OPERATION_STATE_EXECUTED == 1:
-                        bonds_and_coupons_info[figi]['paid_amount'] = _parse_money_value(x.payment)
-
-        print(bonds_and_coupons_info)
+        print(bonds)
+        # positions_list = client.operations.get_portfolio(account_id=broker_account_info['id']).positions
+        # my_positions = [{col: getattr(pos, col, None) for col in important_columns_positions} for pos in positions_list]
+        #
+        # # Достаю названия позиций в портфеле
+        # instruments_uids = [x['instrument_uid'] for x in my_positions]
+        # positions_names = {}
+        # for uid in instruments_uids:
+        #         positions_names[uid] = client.instruments\
+        #                                 .get_instrument_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID
+        #                                                    , id=uid).instrument.name
+        #
+        # # Кладу названия в словарь с позициями
+        # for pos in my_positions:
+        #         pos['name'] = positions_names.get(pos['instrument_uid'])
+        #
+        #
+        # # a = client.instruments.get_bond_coupons(instrument_id='93d49733-cde2-4832-afd7-2274b4dcd96e').events # облигация floating
+        # # print(a)#a.pay_one_bond, a.coupon_type, a.coupon_date)
+        #
+        # # Облигации
+        # # Купонов в год, дата погашения, номинал, сектор, валюта
+        # # ========================================================
+        # # Купоны
+        # # Дата ближайшего купона, тип купона, сумма купона
+        # # Дата предыдущего купона, тип купона, сумма купона
+        #
+        # bonds_uids = [x['instrument_uid'] for x in my_positions if x['instrument_type'] == 'bond']
+        # bonds_and_coupons_info = {}
+        # for b in bonds_uids:
+        #         # Облигации
+        #         bond = client.instruments.bond_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID,
+        #                                          id=b).instrument
+        #         # Купоны. Следующий и предыдущий
+        #         next_coupon = None
+        #         for nc in client.instruments.get_bond_coupons(instrument_id=b).events:
+        #                 if nc.coupon_date < today:
+        #                         continue
+        #                 if next_coupon is None or nc.coupon_date < next_coupon.coupon_date:
+        #                         next_coupon = nc
+        #
+        #         previous_coupon = None
+        #         for pc in client.instruments.get_bond_coupons(instrument_id=b).events:
+        #                 if pc.coupon_date > today:
+        #                         continue
+        #                 if previous_coupon is None or pc.coupon_date > previous_coupon.coupon_date:
+        #                         previous_coupon = pc
+        #
+        #         def _parse_money_value(mv):
+        #             if mv is not None:
+        #                 return mv.units + mv.nano / 1e9
+        #             else:
+        #                 return mv
+        #
+        #         # Добавляю информацию в словарь об облигациях и купонах
+        #         bond_and_coupons_data = {
+        #             'bond_figi': bond.figi,
+        #             'bond_ticker': bond.ticker,
+        #             'coupon_quantity_per_year': bond.coupon_quantity_per_year,
+        #             'maturity_date': bond.maturity_date.date(),
+        #             'nominal': _parse_money_value(bond.nominal),
+        #             'sector': bond.sector,
+        #             'currency': bond.currency,
+        #             'next_coupon_date': next_coupon.coupon_date.date() if next_coupon else None,
+        #             'next_pay_one_bond': _parse_money_value(next_coupon.pay_one_bond if next_coupon else None),
+        #             'next_coupon_type': next_coupon.coupon_type.name if next_coupon else None,
+        #             'previous_coupon_date': previous_coupon.coupon_date.date() if previous_coupon else None,
+        #             'previous_pay_one_bond': _parse_money_value(previous_coupon.pay_one_bond if previous_coupon
+        #                                                         else None),
+        #             'previous_coupon_type': previous_coupon.coupon_type.name if previous_coupon else None
+        #         }
+        #         bonds_and_coupons_info[bond.figi] = bond_and_coupons_data
+        #
+        # # Дата первой покупки облигаций
+        # bond_first_purchase = {}
+        # for figi in bonds_and_coupons_info:
+        #     bond_operations = client.operations.get_operations(
+        #         account_id=broker_account_info['id'],  # ID счёта (обязательно)
+        #         from_=year_2025,  # с какой даты
+        #         to=today,  # по какую дату
+        #         figi=bonds_and_coupons_info[figi]['bond_figi']  # figi конкретного инструмента
+        #     ).operations
+        #     for op in bond_operations:
+        #         if op.type == 'Покупка ценных бумаг' and op.operation_type.OPERATION_TYPE_BUY == 15:
+        #             bond_first_purchase.setdefault(figi, []).append(op.date)
+        #     bond_first_purchase[figi] = min(bond_first_purchase[figi]).date()
+        # # print(bond_first_purchase['BBG01MVSHPP3'])
+        #
+        # # Создаю/обновляю json с датами первых покупок облигаций
+        # json_path = r'C:/Users/Дмитрий/Desktop/investment_tracker/bond_first_purchase.json'
+        # if os.path.exists(json_path):
+        #     with open(json_path, 'r') as f:
+        #         json_data = json.load(f)
+        #
+        #     for k, v in bond_first_purchase.items():
+        #         if k not in json_data:
+        #             json_data[k] = v
+        #
+        #     with open(json_path, 'w', encoding='utf-8') as f:
+        #         json.dump(json_data, f, indent=4, ensure_ascii=False, default=str)
+        # else:
+        #     with open(json_path, 'w', encoding='utf-8') as f:
+        #         json.dump(bond_first_purchase, f, indent=4, ensure_ascii=False, default=str)
+        #
+        # # Добавляю в инфо об облигациях и купонах даты первых покупок и должна ли была пройти выплата
+        # with open(json_path, 'r') as f:
+        #     json_data = json.load(f)
+        #
+        # for figi, dat in json_data.items():
+        #     # Даты первых покупок
+        #     dat = datetime.strptime(dat, '%Y-%m-%d').date()
+        #     bonds_and_coupons_info[figi]['first_purchase_date'] = dat
+        #
+        #     # Должна ли быть выплата по предыдущему купону
+        #     diff_days = (bonds_and_coupons_info[figi]['previous_coupon_date'] - dat).days\
+        #         if bonds_and_coupons_info[figi]['previous_coupon_date'] else None
+        #     bonds_and_coupons_info[figi]['should_be_paid'] = 0 if diff_days is None or diff_days < 1 else 1
+        #
+        # # Были ли выплата в течение 7 дней после назначенной даты
+        # for figi in bonds_and_coupons_info:
+        #     # По-умолчанию проставляю у всех 0
+        #     bonds_and_coupons_info[figi]['paid_amount'] = 0
+        #
+        #     # Если предыдущая выплата существовала, то указываю, сколько было выплачено. Если не было, то 0 по-умолчанию
+        #     if bonds_and_coupons_info[figi]['previous_coupon_date']:
+        #         bond_operations = client.operations.get_operations(
+        #             account_id=broker_account_info['id'],  # ID счёта (обязательно)
+        #             from_=datetime.combine(bonds_and_coupons_info[figi]['previous_coupon_date'],
+        #                                    datetime.min.time()),  # с какой даты
+        #             to=datetime.combine(bonds_and_coupons_info[figi]['previous_coupon_date'] + timedelta(days=7),
+        #                                 datetime.min.time()),  # по какую дату
+        #             figi=bonds_and_coupons_info[figi]['bond_figi']  # figi конкретного инструмента
+        #         ).operations
+        #
+        #         for x in bond_operations:
+        #             if x.type == 'Выплата купонов' and x.state.OPERATION_STATE_EXECUTED == 1:
+        #                 bonds_and_coupons_info[figi]['paid_amount'] = _parse_money_value(x.payment)
+        #
+        # for_bonds_table = ['figi', 'ticker', 'instrument_id', 'instrument_type', 'bond_name', 'nominal',
+        #                    'currency', 'sector', 'maturity_date', 'coupon_quantity_per_year', 'first_purchase_date',
+        #                    'is_in_portfolio', 'created_at_utc', 'updated_at_utc']
+        #
+        # # собираю справочник по облигациям для загрузки в postgres
+        # figi_to_name = {pos['figi']: pos['name'] for pos in my_positions}
+        # figi_to_uid = {pos['figi']: pos['uid'] for pos in my_positions}
+        # bonds_for_db = {}
+        # for figi, data in bonds_and_coupons_info.items():
+        #     bonds_for_db[figi] = {
+        #         'figi': figi,
+        #         'ticker': data['ticker'],
+        #         'instrument_id': figi_to_uid[figi],
+        #         'instrument_type': 'bond',
+        #         'bond_name': figi_to_name[figi],
+        #         'nominal': data['nominal'],
+        #         'currency': data['currency'],
+        #         'sector': data['sector'],
+        #         'maturity_date': data['maturity_date'],
+        #         'coupon_quantity_per_year': data['coupon_quantity_per_year'],
+        #         'first_purchase_date': data['first_purchase_date'],
+        #         'is_in_portfolio': []
+        #     }
+        #
+        # print(my_positions, bonds_and_coupons_info['BBG01MVSHPP3'], sep='\n\n')
 
 
 
