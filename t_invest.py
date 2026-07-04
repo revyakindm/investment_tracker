@@ -23,7 +23,7 @@ year_2025 = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
 with Client(TOKEN) as client:
         # составляю все поля для каждой таблицы
-        bonds_columns = ['figi', 'ticker', 'instrument_uid', 'instrument_type', 'bond_name', 'nominal',
+        bonds_columns = ['figi', 'ticker', 'instrument_uid', 'instrument_type', 'bond_type', 'bond_name', 'nominal',
                          'currency', 'sector', 'maturity_date', 'coupon_quantity_per_year', 'first_purchase_date',
                          'is_in_portfolio', 'created_at_utc', 'updated_at_utc']
 
@@ -39,20 +39,95 @@ with Client(TOKEN) as client:
         # Все позиции в портфеле
         # important_columns_positions = ['ticker', 'instrument_uid', 'figi', 'instrument_type', 'quantity', 'quantity_lots',
         #                      'average_position_price', 'expected_yield', 'current_nkd', 'current_price']
+
+        # выгружаю все figi облигаций, которые когда-то были с 2025 года
+        all_operations = client.operations.get_operations(
+            account_id=broker_account_info['id'],
+            from_=year_2025,
+            to=today,
+        ).operations
+        ever_bought_figis = {op.figi for op in all_operations if op.type == 'Покупка ценных бумаг'
+                             and op.instrument_type == 'bond'}
+
+        # формирую словарь с облигациями
+        figi_in_portfolio = [pos.figi for pos in client.operations.get_portfolio(account_id=broker_account_info['id']).positions]
         bonds = {}
-        for pos in client.operations.get_portfolio(account_id=broker_account_info['id']).positions:
+        for figi in ever_bought_figis:
             temp_dct = {}
+            bond = client.instruments.bond_by(
+                id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_FIGI,
+                id=figi
+            ).instrument
+            temp_dct['figi'] = bond.figi
+            temp_dct['ticker'] = bond.ticker
+            temp_dct['instrument_uid'] = bond.uid
+            temp_dct['instrument_type'] = 'bond'
+            temp_dct['bond_type'] = bond.bond_type.name
+            temp_dct['bond_name'] = bond.name
+            temp_dct['nominal'] = bond.nominal
+            temp_dct['currency'] = bond.currency
+            temp_dct['sector'] = bond.sector
+            temp_dct['maturity_date'] = bond.maturity_date
+            temp_dct['coupon_quantity_per_year'] = bond.coupon_quantity_per_year
 
-            # figi, ticker, instrument_uid, instrument_type
-            for col in bonds_columns:
-                if pos.__dict__.get(col) is not None:
-                    temp_dct[col] = pos.__dict__.get(col)
+            # first_purchase_date
+            bond_first_purchase = {}
+            for op in all_operations:
+                if op.type == 'Покупка ценных бумаг' and op.instrument_type == 'bond' and op.operation_type.OPERATION_TYPE_BUY == 15:
+                    bond_first_purchase.setdefault(temp_dct['figi'], []).append(op.date)
+            temp_dct['first_purchase_date'] = min(bond_first_purchase[temp_dct['figi']]).date()
 
-            # name
-            temp_dct['bond_name'] = client.instruments.get_instrument_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID, id=temp_dct['instrument_uid']).instrument.name
-            bonds[pos.figi] = temp_dct
+            # is_in_porfolio
+            temp_dct['is_in_portfolio'] = True if figi in figi_in_portfolio else False
 
+            bonds[figi] = temp_dct
         print(bonds)
+
+        # for pos in client.operations.get_portfolio(account_id=broker_account_info['id']).positions:
+        #     print(pos.__dict__)
+        #     break
+            # if pos.instrument_type == 'bond':
+            #     temp_dct = {}
+            #
+            #     # figi, ticker, instrument_uid, instrument_type
+            #     for col in bonds_columns:
+            #         if pos.__dict__.get(col) is not None:
+            #             temp_dct[col] = pos.__dict__.get(col)
+            #
+            #     # name
+            #     temp_dct['bond_name'] = client.instruments.get_instrument_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID, id=temp_dct['instrument_uid']).instrument.name
+            #
+            #     # nominal, currency, sector, maturity_date, coupon_quantity_per_year
+            #     coupon_info = client.instruments.bond_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID,id=temp_dct['instrument_uid']).instrument
+            #     temp_dct['nominal'] = coupon_info.nominal
+            #     temp_dct['currency'] = coupon_info.currency
+            #     temp_dct['sector'] = coupon_info.sector
+            #     temp_dct['maturity_date'] = coupon_info.maturity_date
+            #     temp_dct['coupon_quantity_per_year'] = coupon_info.coupon_quantity_per_year
+            #
+            #     # first_purchase_date
+            #     bond_first_purchase = {}
+            #     bond_operations = client.operations.get_operations(
+            #         account_id=broker_account_info['id'],  # ID счёта (обязательно)
+            #         from_=year_2025,  # с какой даты
+            #         to=today,  # по какую дату
+            #         figi=temp_dct['figi']  # figi конкретного инструмента
+            #     ).operations
+            #     for op in bond_operations:
+            #         if op.type == 'Покупка ценных бумаг' and op.operation_type.OPERATION_TYPE_BUY == 15:
+            #             bond_first_purchase.setdefault(temp_dct['figi'], []).append(op.date)
+            #     temp_dct['first_purchase_date'] = min(bond_first_purchase[temp_dct['figi']]).date()
+            #
+            #     # is_in_porfolio
+            #     if
+            #     if temp_dct['figi'] in ever_bought_figis:
+            #         temp_dct['is_in_porfolio'] = temp_dct['figi']
+            #
+            #
+            #     bonds[pos.figi] = temp_dct
+
+            # break
+        # print(bonds)
         # positions_list = client.operations.get_portfolio(account_id=broker_account_info['id']).positions
         # my_positions = [{col: getattr(pos, col, None) for col in important_columns_positions} for pos in positions_list]
 
