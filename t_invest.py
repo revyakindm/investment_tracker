@@ -32,10 +32,8 @@ with Client(TOKEN) as client:
         portfolio_columns = ['snapshot_date', 'bond_figi', 'quantity', 'average_price', 'current_nkd',
                              'expected_yield', 'current_price']
 
-        # Загружаем все аккаунты
+        # Загружаю инфо по брокерскому счету
         accounts = client.users.get_accounts().accounts
-
-        # Выбираем только брокерский счёт и всю информацию по нему
         broker_account_info = [acc for acc in accounts if acc.type == 1][0].__dict__
 
         # Все позиции в портфеле
@@ -44,17 +42,21 @@ with Client(TOKEN) as client:
         bonds = {}
         for pos in client.operations.get_portfolio(account_id=broker_account_info['id']).positions:
             temp_dct = {}
+
+            # figi, ticker, instrument_uid, instrument_type
             for col in bonds_columns:
                 if pos.__dict__.get(col) is not None:
                     temp_dct[col] = pos.__dict__.get(col)
+
+            # name
+            temp_dct['bond_name'] = client.instruments.get_instrument_by(id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_UID, id=temp_dct['instrument_uid']).instrument.name
             bonds[pos.figi] = temp_dct
-            break
 
         print(bonds)
         # positions_list = client.operations.get_portfolio(account_id=broker_account_info['id']).positions
         # my_positions = [{col: getattr(pos, col, None) for col in important_columns_positions} for pos in positions_list]
-        #
-        # # Достаю названия позиций в портфеле
+
+        # Достаю названия позиций в портфеле
         # instruments_uids = [x['instrument_uid'] for x in my_positions]
         # positions_names = {}
         # for uid in instruments_uids:
