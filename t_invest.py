@@ -10,16 +10,44 @@ from dotenv import load_dotenv
 from t_tech.invest import Client
 from t_tech.invest.schemas import InstrumentIdType
 
-import json
+import psycopg2
 
 load_dotenv()
 
 TOKEN = os.getenv("T_INVEST_TOKEN")
+HOST=os.getenv("POSTGRES_HOST")
+PORT=os.getenv("POSTGRES_PORT")
+DB=os.getenv("POSTGRES_DB")
+USER=os.getenv("POSTGRES_USER")
+PASSWORD=os.getenv("POSTGRES_PASSWORD")
 
-today = datetime.now(timezone.utc)
-year_2025 = datetime(2025, 1, 1, tzinfo=timezone.utc)
+TODAY = datetime.now(timezone.utc)
+YEAR_2025 = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
-# instruments, operations, users
+class DatabaseManage:
+    def __init__(self, host, port, database, user, password, autocommit=False):
+        self.connection = psycopg2.connect(
+            host=host,
+            port=port,
+            database=database,
+            user=user,
+            password=password,
+        )
+        if autocommit:
+            self.connection.autocommit = True
+
+        self.cursor = self.connection.cursor()
+
+    def select(self, query, params=None):
+        self.cursor.execute(query, params)
+        results = self.cursor.fetchall()
+        return results
+
+    def insert(self, query, params=None):
+        self.cursor.execute(query, params)
+        if not self.connection.autocommit:
+            self.connection.commit()
+
 
 def _parse_money_value(mv):
     if mv is not None:
@@ -28,29 +56,15 @@ def _parse_money_value(mv):
         return mv
 
 with Client(TOKEN) as client:
-        # составляю все поля для каждой таблицы
-        bonds_columns = ['figi', 'ticker', 'instrument_uid', 'instrument_type', 'bond_type', 'bond_name', 'nominal',
-                         'currency', 'sector', 'maturity_date', 'coupon_quantity_per_year', 'first_purchase_date',
-                         'is_in_portfolio', 'created_at_utc', 'updated_at_utc']
-
-        coupon_columns = ['bond_figi', 'coupon_date', 'coupon_type', 'pay_per_bond']
-
-        portfolio_columns = ['snapshot_date', 'bond_figi', 'quantity', 'average_price', 'current_nkd',
-                             'expected_yield', 'current_price']
-
         # Загружаю инфо по брокерскому счету
         accounts = client.users.get_accounts().accounts
         broker_account_info = [acc for acc in accounts if acc.type == 1][0].__dict__
 
-        # Все позиции в портфеле
-        # important_columns_positions = ['ticker', 'instrument_uid', 'figi', 'instrument_type', 'quantity', 'quantity_lots',
-        #                      'average_position_price', 'expected_yield', 'current_nkd', 'current_price']
-
         # выгружаю все figi облигаций, которые когда-то были с 2025 года
         all_operations = client.operations.get_operations(
             account_id=broker_account_info['id'],
-            from_=year_2025,
-            to=today,
+            from_=YEAR_2025,
+            to=TODAY,
         ).operations
         ever_bought_figis = {op.figi for op in all_operations if op.type == 'Покупка ценных бумаг'
                              and op.instrument_type == 'bond'}
@@ -106,13 +120,18 @@ with Client(TOKEN) as client:
         for pos in current_positions:
             if pos.instrument_type == 'bond':
                 temp_dct_portfolio = {}
-                temp_dct_portfolio['snapshot_date'] = today.date()
                 temp_dct_portfolio['bond_figi'] = pos.figi
                 temp_dct_portfolio['quantity'] = _parse_money_value(pos.quantity)
                 temp_dct_portfolio['average_price'] = _parse_money_value(pos.average_position_price)
                 temp_dct_portfolio['current_nkd'] = _parse_money_value(pos.current_nkd)
                 temp_dct_portfolio['expected_yield'] = _parse_money_value(pos.expected_yield)
                 temp_dct_portfolio['current_price'] = _parse_money_value(pos.current_price)
+                temp_dct_portfolio['snapshot_date'] = TODAY.date()
                 my_portfolio.append(temp_dct_portfolio)
 
-        print(bonds, coupons, my_portfolio, sep='\n\n')
+db = DatabaseManage(HOST, PORT, DB, USER, PASSWORD, autocommit=True)
+for i in bonds:
+    db.insert("insert into bonds values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", tuple(i.values()))
+
+
+# print(bonds, coupons, my_portfolio, sep='\n\n')
