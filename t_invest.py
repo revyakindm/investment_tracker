@@ -11,6 +11,7 @@ from t_tech.invest import Client
 from t_tech.invest.schemas import InstrumentIdType
 
 import psycopg2
+from psycopg2.extras import execute_values
 
 load_dotenv()
 
@@ -43,10 +44,19 @@ class DatabaseManage:
         results = self.cursor.fetchall()
         return results
 
-    def insert(self, query, params=None):
-        self.cursor.execute(query, params)
+    def insert(self, query):
+        self.cursor.execute(query)
         if not self.connection.autocommit:
             self.connection.commit()
+
+    def insert_many(self, table_name, data):
+        if not data:
+            return
+        cols = data[0].keys()
+        cols_rows = ', '.join(data[0].keys())
+        val = [tuple(dct[c] for c in cols) for dct in data]
+        query = f"insert into {table_name} ({cols_rows}) values %s"
+        execute_values(self.cursor, query, val)
 
 
 def _parse_money_value(mv):
@@ -105,7 +115,9 @@ with Client(TOKEN) as client:
             bonds.append(temp_dct_bonds_info)
 
             # формирую инфо по купонам
-            coupon = client.instruments.get_bond_coupons(instrument_id=figi).events
+            coupon = client.instruments.get_bond_coupons(instrument_id=figi,
+                                                         from_=datetime(2000, 1, 1, tzinfo=timezone.utc),
+                                                         to=bond.maturity_date).events
             for coup in coupon:
                 temp_dct_coupon_info = {}
                 temp_dct_coupon_info['bond_figi'] = coup.figi
@@ -130,8 +142,22 @@ with Client(TOKEN) as client:
                 my_portfolio.append(temp_dct_portfolio)
 
 db = DatabaseManage(HOST, PORT, DB, USER, PASSWORD, autocommit=True)
-for i in bonds:
-    db.insert("insert into bonds values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", tuple(i.values()))
+db.insert_many('bonds', bonds)
+db.insert_many('coupons', coupons)
+db.insert_many('portfolio_snapshots', my_portfolio)
+
+# print([tuple(x.values()) for x in bonds])
+# print(bonds)
+# for i in bonds:
+#     print(i)
+#     print(tuple(i.values()))
+#     break
+# for t in (bonds, coupons, my_portfolio):
+#     for i in t:
+        # db.insert("")
+# for i in bonds:
+    # db.insert("insert into bonds values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", tuple(i.values()))
+
 
 
 # print(bonds, coupons, my_portfolio, sep='\n\n')
