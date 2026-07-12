@@ -141,23 +141,7 @@ with Client(TOKEN) as client:
                 temp_dct_portfolio['snapshot_date'] = TODAY.date()
                 my_portfolio.append(temp_dct_portfolio)
 
-db = DatabaseManage(HOST, PORT, DB, USER, PASSWORD, autocommit=True)
-db.insert_many('bonds', bonds)
-db.insert_many('coupons', coupons)
-db.insert_many('portfolio_snapshots', my_portfolio)
-
-# print([tuple(x.values()) for x in bonds])
-# print(bonds)
-# for i in bonds:
-#     print(i)
-#     print(tuple(i.values()))
-#     break
-# for t in (bonds, coupons, my_portfolio):
-#     for i in t:
-        # db.insert("")
-# for i in bonds:
-    # db.insert("insert into bonds values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", tuple(i.values()))
-
-
-
-# print(bonds, coupons, my_portfolio, sep='\n\n')
+# db = DatabaseManage(HOST, PORT, DB, USER, PASSWORD, autocommit=True)
+# db.insert_many('bonds', bonds)
+# db.insert_many('coupons', coupons)
+# db.insert_many('portfolio_snapshots', my_portfolio)
