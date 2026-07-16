@@ -58,7 +58,6 @@ class DatabaseManage:
         query = f"insert into {table_name} ({cols_rows}) values %s"
         execute_values(self.cursor, query, val)
 
-
 def _parse_money_value(mv):
     if mv is not None:
         return mv.units + mv.nano / 1e9
@@ -78,6 +77,18 @@ with Client(TOKEN) as client:
         ).operations
         ever_bought_figis = {op.figi for op in all_operations if op.type == 'Покупка ценных бумаг'
                              and op.instrument_type == 'bond'}
+
+        # выплаты по облигациям с 2025 года
+        coupon_payments = []
+        for op in all_operations:
+            temp_dct = {}
+            if op.type == 'Выплата купонов' and op.instrument_type == 'bond':
+                temp_dct['operation_id'] = op.id
+                temp_dct['figi'] = op.figi
+                temp_dct['date'] = op.date.date()
+                temp_dct['amount'] = _parse_money_value(op.payment)
+                temp_dct['currency'] = op.currency
+                coupon_payments.append(temp_dct)
 
         # облигации в портфеле на текущий момент
         bonds_figi_in_portfolio = {pos.figi for pos in client.operations.get_portfolio(account_id=broker_account_info['id']).positions\
@@ -145,6 +156,7 @@ db = DatabaseManage(HOST, PORT, DB, USER, PASSWORD, autocommit=True)
 db.insert_many('bonds', bonds)
 db.insert_many('coupons', coupons)
 db.insert_many('portfolio_snapshots', my_portfolio)
+db.insert_many('coupons_payments', coupon_payments)
 
 # print([tuple(x.values()) for x in bonds])
 # print(bonds)
