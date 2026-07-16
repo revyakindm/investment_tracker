@@ -2,3 +2,4 @@
 t-tech-investments
 psycopg2-binary
 pandas
+requests
