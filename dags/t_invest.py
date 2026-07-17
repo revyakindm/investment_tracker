@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timezone, timedelta
 
 import pandas as pd
+
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
 pd.set_option('display.max_colwidth', 30)
@@ -39,9 +40,15 @@ class DatabaseManage:
 
         self.cursor = self.connection.cursor()
 
-    def select(self, query, params=None):
+    def select(self, query, how_many_lines=None, params=None):
         self.cursor.execute(query, params)
-        results = self.cursor.fetchall()
+        if how_many_lines == 'all':
+            results = self.cursor.fetchall()
+        elif how_many_lines == 'one':
+            results = self.cursor.fetchone()
+        else:
+            results = self.cursor.fetchone()
+
         return results
 
     def insert(self, query):
@@ -49,13 +56,27 @@ class DatabaseManage:
         if not self.connection.autocommit:
             self.connection.commit()
 
-    def insert_many(self, table_name, data):
+    def insert_many(self, table_name, schema, data, conflict_col=None):
         if not data:
             return
-        cols = data[0].keys()
-        cols_rows = ', '.join(data[0].keys())
+        cols = list(data[0].keys())
+        cols_rows = ', '.join(cols)
         val = [tuple(dct[c] for c in cols) for dct in data]
-        query = f"insert into {table_name} ({cols_rows}) values %s"
+        if conflict_col:
+            # conflict_col может быть строкой или списком
+            if isinstance(conflict_col, (list, tuple)):
+                conflict_str = ', '.join(conflict_col)
+                update_cols = ', '.join(f"{c} = EXCLUDED.{c}" for c in cols if c not in conflict_col)
+            else:
+                conflict_str = conflict_col
+                update_cols = ', '.join(f"{c} = EXCLUDED.{c}" for c in cols if c != conflict_col)
+            query = f"""
+                insert into {schema}.{table_name} ({cols_rows})
+                values %s
+                on conflict ({conflict_str}) do update set {update_cols}
+            """
+        else:
+            query = f"insert into {schema}.{table_name} ({cols_rows}) values %s"
         execute_values(self.cursor, query, val)
 
 def _parse_money_value(mv):
@@ -63,6 +84,8 @@ def _parse_money_value(mv):
         return mv.units + mv.nano / 1e9
     else:
         return mv
+
+db = DatabaseManage(HOST, PORT, DB, USER, PASSWORD, autocommit=True)
 
 with Client(TOKEN) as client:
         # Загружаю инфо по брокерскому счету
@@ -78,14 +101,18 @@ with Client(TOKEN) as client:
         ever_bought_figis = {op.figi for op in all_operations if op.type == 'Покупка ценных бумаг'
                              and op.instrument_type == 'bond'}
 
-        # выплаты по облигациям с 2025 года
+        # максимальная дата в ods.coupons_payments
+        max_date_payments = db.select("select max(payment_date) from ods.coupons_payments", 'one')
+        date_payments_from = max_date_payments[0] if max_date_payments and max_date_payments[0] else YEAR_2025.date()
+
+        # выплаты по облигациям
         coupon_payments = []
         for op in all_operations:
             temp_dct = {}
-            if op.type == 'Выплата купонов' and op.instrument_type == 'bond':
+            if op.type == 'Выплата купонов' and op.instrument_type == 'bond' and op.date.date() > date_payments_from:
                 temp_dct['operation_id'] = op.id
-                temp_dct['figi'] = op.figi
-                temp_dct['date'] = op.date.date()
+                temp_dct['bond_figi'] = op.figi
+                temp_dct['payment_date'] = op.date.date()
                 temp_dct['amount'] = _parse_money_value(op.payment)
                 temp_dct['currency'] = op.currency
                 coupon_payments.append(temp_dct)
@@ -99,6 +126,12 @@ with Client(TOKEN) as client:
         for op in all_operations:
             if op.type == 'Покупка ценных бумаг' and op.instrument_type == 'bond':
                 bond_first_purchase.setdefault(op.figi, []).append(op.date)
+
+        figi_in_db = db.select("select distinct bond_figi from ods.bonds", how_many_lines='all')
+        if figi_in_db:
+            figi_in_db_lst = [figi[0] for figi in figi_in_db]
+        else:
+            figi_in_db_lst = []
 
         bonds = []
         coupons = []
@@ -129,13 +162,14 @@ with Client(TOKEN) as client:
             coupon = client.instruments.get_bond_coupons(instrument_id=figi,
                                                          from_=datetime(2000, 1, 1, tzinfo=timezone.utc),
                                                          to=bond.maturity_date).events
-            for coup in coupon:
-                temp_dct_coupon_info = {}
-                temp_dct_coupon_info['bond_figi'] = coup.figi
-                temp_dct_coupon_info['coupon_date'] = coup.coupon_date.date()
-                temp_dct_coupon_info['coupon_type'] = coup.coupon_type.name
-                temp_dct_coupon_info['pay_one_bond'] = _parse_money_value(coup.pay_one_bond)
-                coupons.append(temp_dct_coupon_info)
+            if figi not in figi_in_db_lst:
+                for coup in coupon:
+                    temp_dct_coupon_info = {}
+                    temp_dct_coupon_info['bond_figi'] = coup.figi
+                    temp_dct_coupon_info['coupon_date'] = coup.coupon_date.date()
+                    temp_dct_coupon_info['coupon_type'] = coup.coupon_type.name
+                    temp_dct_coupon_info['pay_one_bond'] = _parse_money_value(coup.pay_one_bond)
+                    coupons.append(temp_dct_coupon_info)
 
         # текущее состояние портфеля
         current_positions = client.operations.get_portfolio(account_id=broker_account_info['id']).positions
@@ -153,10 +187,10 @@ with Client(TOKEN) as client:
                 my_portfolio.append(temp_dct_portfolio)
 
 db = DatabaseManage(HOST, PORT, DB, USER, PASSWORD, autocommit=True)
-db.insert_many('bonds', bonds)
-db.insert_many('coupons', coupons)
-db.insert_many('portfolio_snapshots', my_portfolio)
-db.insert_many('coupons_payments', coupon_payments)
+db.insert_many('bonds', 'ods', bonds, conflict_col='bond_figi')
+db.insert_many('coupons', 'ods', coupons)
+db.insert_many('portfolio_snapshots', 'ods', my_portfolio, conflict_col=['snapshot_date', 'bond_figi'])
+db.insert_many('coupons_payments', 'ods', coupon_payments)
 
 # print([tuple(x.values()) for x in bonds])
 # print(bonds)
