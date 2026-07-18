@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timezone, timedelta
 
 import pandas as pd
+from psycopg2 import sql
 
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
@@ -13,6 +14,8 @@ from t_tech.invest.schemas import InstrumentIdType
 
 import psycopg2
 from psycopg2.extras import execute_values
+
+from pathlib import Path
 
 load_dotenv()
 
@@ -186,24 +189,10 @@ with Client(TOKEN) as client:
                 temp_dct_portfolio['snapshot_date'] = TODAY.date()
                 my_portfolio.append(temp_dct_portfolio)
 
-db = DatabaseManage(HOST, PORT, DB, USER, PASSWORD, autocommit=True)
 db.insert_many('bonds', 'ods', bonds, conflict_col='bond_figi')
 db.insert_many('coupons', 'ods', coupons)
 db.insert_many('portfolio_snapshots', 'ods', my_portfolio, conflict_col=['snapshot_date', 'bond_figi'])
 db.insert_many('coupons_payments', 'ods', coupon_payments)
 
-# print([tuple(x.values()) for x in bonds])
-# print(bonds)
-# for i in bonds:
-#     print(i)
-#     print(tuple(i.values()))
-#     break
-# for t in (bonds, coupons, my_portfolio):
-#     for i in t:
-        # db.insert("")
-# for i in bonds:
-    # db.insert("insert into bonds values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", tuple(i.values()))
-
-
-
-# print(bonds, coupons, my_portfolio, sep='\n\n')
+SQL_FILE = Path(__file__).parent.parent / "sql" / "query_coupons_payments_status.sql"
+db.insert(SQL_FILE.read_text(encoding="utf-8"))
