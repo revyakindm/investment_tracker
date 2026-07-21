@@ -1,14 +1,12 @@
-import os
+# import os
 from datetime import datetime, timezone, timedelta
 
 import pandas as pd
-from psycopg2 import sql
-
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
 pd.set_option('display.max_colwidth', 30)
 
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 from t_tech.invest import Client
 from t_tech.invest.schemas import InstrumentIdType
 
@@ -17,14 +15,22 @@ from psycopg2.extras import execute_values
 
 from pathlib import Path
 
-load_dotenv()
+from airflow import DAG
+from airflow.hooks.base import BaseHook
+from airflow.decorators import task
 
-TOKEN = os.getenv("T_INVEST_TOKEN")
-HOST=os.getenv("POSTGRES_HOST")
-PORT=os.getenv("POSTGRES_PORT")
-DB=os.getenv("POSTGRES_DB")
-USER=os.getenv("POSTGRES_USER")
-PASSWORD=os.getenv("POSTGRES_PASSWORD")
+import logging
+log = logging.getLogger("airflow.task")
+
+
+# load_dotenv()
+#
+# TOKEN = os.getenv("T_INVEST_TOKEN")
+# HOST=os.getenv("POSTGRES_HOST")
+# PORT=os.getenv("POSTGRES_PORT")
+# DB=os.getenv("POSTGRES_DB")
+# USER=os.getenv("POSTGRES_USER")
+# PASSWORD=os.getenv("POSTGRES_PASSWORD")
 
 TODAY = datetime.now(timezone.utc)
 YEAR_2025 = datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -88,111 +94,202 @@ def _parse_money_value(mv):
     else:
         return mv
 
-db = DatabaseManage(HOST, PORT, DB, USER, PASSWORD, autocommit=True)
+config_t_invest = BaseHook.get_connection("t_invest_token")
+config_local_db = BaseHook.get_connection("local_db_postgres")
 
-with Client(TOKEN) as client:
-        # Загружаю инфо по брокерскому счету
-        accounts = client.users.get_accounts().accounts
-        broker_account_info = [acc for acc in accounts if acc.type == 1][0].__dict__
+db = DatabaseManage(config_local_db.host, config_local_db.port,
+                    config_local_db.schema,
+                    config_local_db.login, config_local_db.password,
+                    autocommit=True)
 
-        # выгружаю все figi облигаций, которые когда-то были с 2025 года
-        all_operations = client.operations.get_operations(
-            account_id=broker_account_info['id'],
-            from_=YEAR_2025,
-            to=TODAY,
-        ).operations
-        ever_bought_figis = {op.figi for op in all_operations if op.type == 'Покупка ценных бумаг'
-                             and op.instrument_type == 'bond'}
+TOKEN = config_t_invest.password
 
-        # максимальная дата в ods.coupons_payments
-        max_date_payments = db.select("select max(payment_date) from ods.coupons_payments", 'one')
-        date_payments_from = max_date_payments[0] if max_date_payments and max_date_payments[0] else YEAR_2025.date()
+# db = DatabaseManage(HOST, PORT, DB, USER, PASSWORD, autocommit=True)
 
-        # выплаты по облигациям
-        coupon_payments = []
-        for op in all_operations:
-            temp_dct = {}
-            if op.type == 'Выплата купонов' and op.instrument_type == 'bond' and op.date.date() > date_payments_from:
-                temp_dct['operation_id'] = op.id
-                temp_dct['bond_figi'] = op.figi
-                temp_dct['payment_date'] = op.date.date()
-                temp_dct['amount'] = _parse_money_value(op.payment)
-                temp_dct['currency'] = op.currency
-                coupon_payments.append(temp_dct)
+@task
+def from_api_to_stg():
+    with Client(TOKEN) as client:
+            # Загружаю инфо по брокерскому счету
+            accounts = client.users.get_accounts().accounts
+            broker_account_info = [acc for acc in accounts if acc.type == 1][0].__dict__
 
-        # облигации в портфеле на текущий момент
-        bonds_figi_in_portfolio = {pos.figi for pos in client.operations.get_portfolio(account_id=broker_account_info['id']).positions\
-                             if pos.instrument_type == 'bond'}
+            # выгружаю все figi облигаций, которые когда-то были с 2025 года
+            all_operations = client.operations.get_operations(
+                account_id=broker_account_info['id'],
+                from_=YEAR_2025,
+                to=TODAY,
+            ).operations
+            ever_bought_figis = {op.figi for op in all_operations if op.type == 'Покупка ценных бумаг'
+                                 and op.instrument_type == 'bond'}
 
-        # первая покупка каждой облигации
-        bond_first_purchase = {}
-        for op in all_operations:
-            if op.type == 'Покупка ценных бумаг' and op.instrument_type == 'bond':
-                bond_first_purchase.setdefault(op.figi, []).append(op.date)
+            # максимальная дата в ods.coupons_payments
+            max_date_payments = db.select("select max(payment_date) from ods.coupons_payments", 'one')
+            date_payments_from = max_date_payments[0] if max_date_payments and max_date_payments[0] else YEAR_2025.date()
 
-        figi_in_db = db.select("select distinct bond_figi from ods.bonds", how_many_lines='all')
-        if figi_in_db:
-            figi_in_db_lst = [figi[0] for figi in figi_in_db]
+            # выплаты по облигациям
+            coupon_payments = []
+            for op in all_operations:
+                temp_dct = {}
+                if op.type == 'Выплата купонов' and op.instrument_type == 'bond' and op.date.date() > date_payments_from:
+                    temp_dct['operation_id'] = op.id
+                    temp_dct['bond_figi'] = op.figi
+                    temp_dct['payment_date'] = op.date.date()
+                    temp_dct['amount'] = _parse_money_value(op.payment)
+                    temp_dct['currency'] = op.currency
+                    coupon_payments.append(temp_dct)
+
+            # облигации в портфеле на текущий момент
+            bonds_figi_in_portfolio = {pos.figi for pos in client.operations.get_portfolio(account_id=broker_account_info['id']).positions\
+                                 if pos.instrument_type == 'bond'}
+
+            # первая покупка каждой облигации
+            bond_first_purchase = {}
+            for op in all_operations:
+                if op.type == 'Покупка ценных бумаг' and op.instrument_type == 'bond':
+                    bond_first_purchase.setdefault(op.figi, []).append(op.date)
+
+            figi_in_db = db.select("select distinct bond_figi from ods.bonds", how_many_lines='all')
+            if figi_in_db:
+                figi_in_db_lst = [figi[0] for figi in figi_in_db]
+            else:
+                figi_in_db_lst = []
+
+            bonds = []
+            coupons = []
+            for figi in ever_bought_figis:
+                # формирую инфо по облигациям
+                temp_dct_bonds_info = {}
+                bond = client.instruments.bond_by(
+                    id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_FIGI,
+                    id=figi
+                ).instrument
+                temp_dct_bonds_info['bond_figi'] = bond.figi
+                temp_dct_bonds_info['ticker'] = bond.ticker
+                temp_dct_bonds_info['instrument_uid'] = bond.uid
+                temp_dct_bonds_info['instrument_type'] = 'bond'
+                temp_dct_bonds_info['bond_type'] = bond.bond_type.name
+                temp_dct_bonds_info['bond_name'] = bond.name
+                temp_dct_bonds_info['nominal'] = _parse_money_value(bond.nominal)
+                temp_dct_bonds_info['currency'] = bond.currency
+                temp_dct_bonds_info['sector'] = bond.sector
+                temp_dct_bonds_info['maturity_date'] = bond.maturity_date.date()
+                temp_dct_bonds_info['coupon_quantity_per_year'] = bond.coupon_quantity_per_year
+                temp_dct_bonds_info['first_purchase_date'] = min(bond_first_purchase[figi]).date()
+                temp_dct_bonds_info['is_in_portfolio'] = True if figi in bonds_figi_in_portfolio else False
+
+                bonds.append(temp_dct_bonds_info)
+
+                # формирую инфо по купонам
+                coupon = client.instruments.get_bond_coupons(instrument_id=figi,
+                                                             from_=datetime(2000, 1, 1, tzinfo=timezone.utc),
+                                                             to=bond.maturity_date).events
+                if figi not in figi_in_db_lst:
+                    for coup in coupon:
+                        temp_dct_coupon_info = {}
+                        temp_dct_coupon_info['bond_figi'] = coup.figi
+                        temp_dct_coupon_info['coupon_date'] = coup.coupon_date.date()
+                        temp_dct_coupon_info['coupon_type'] = coup.coupon_type.name
+                        temp_dct_coupon_info['pay_one_bond'] = _parse_money_value(coup.pay_one_bond)
+                        coupons.append(temp_dct_coupon_info)
+
+            # текущее состояние портфеля
+            current_positions = client.operations.get_portfolio(account_id=broker_account_info['id']).positions
+            my_portfolio = []
+            for pos in current_positions:
+                if pos.instrument_type == 'bond':
+                    temp_dct_portfolio = {}
+                    temp_dct_portfolio['bond_figi'] = pos.figi
+                    temp_dct_portfolio['quantity'] = _parse_money_value(pos.quantity)
+                    temp_dct_portfolio['average_price'] = _parse_money_value(pos.average_position_price)
+                    temp_dct_portfolio['current_nkd'] = _parse_money_value(pos.current_nkd)
+                    temp_dct_portfolio['expected_yield'] = _parse_money_value(pos.expected_yield)
+                    temp_dct_portfolio['current_price'] = _parse_money_value(pos.current_price)
+                    temp_dct_portfolio['snapshot_date'] = TODAY.date()
+                    my_portfolio.append(temp_dct_portfolio)
+
+    db.cursor.execute('''truncate table stg.bonds, stg.coupons, stg.portfolio_snapshots, stg.coupons_payments cascade''')
+
+    db.insert_many('bonds', 'stg', bonds, conflict_col='bond_figi')
+    db.insert_many('coupons', 'stg', coupons)
+    db.insert_many('portfolio_snapshots', 'stg', my_portfolio, conflict_col=['snapshot_date', 'bond_figi'])
+    db.insert_many('coupons_payments', 'stg', coupon_payments)
+
+@task
+def bonds_from_stg_to_ods():
+    q = """select * from stg.bonds"""
+    db.cursor.execute(q)
+    col = [desc[0] for desc in db.cursor.description]
+    rows = db.cursor.fetchall()
+    conflict_col_bonds = 'bond_figi'
+    q2 = f"""insert into ods.bonds ({', '.join(col)}) values %s on conflict ({conflict_col_bonds}) do update set
+        {', '.join([f'{x} = EXCLUDED.{x}' for x in col if x != conflict_col_bonds])}"""
+    execute_values(db.cursor, q2, rows)
+
+@task
+def remaining_tables_to_ods():
+    t_names = ('coupons', 'portfolio_snapshots', 'coupons_payments')
+    for table in t_names:
+        q = f"""select * from stg.{table}"""
+        db.cursor.execute(q)
+        col = [desc[0] for desc in db.cursor.description]
+        rows = db.cursor.fetchall()
+        if table == 'portfolio_snapshots':
+            conflict_col = ['snapshot_date', 'bond_figi']
         else:
-            figi_in_db_lst = []
+            conflict_col = None
+        if conflict_col:
+            q2 = f"""insert into ods.{table} ({', '.join(col)}) values %s on conflict ({', '.join(conflict_col)}) do update set
+                {', '.join([f'{x} = EXCLUDED.{x}' for x in col if x != conflict_col])}"""
+        else:
+            q2 = f"""insert into ods.{table} ({', '.join(col)}) values %s"""
 
-        bonds = []
-        coupons = []
-        for figi in ever_bought_figis:
-            # формирую инфо по облигациям
-            temp_dct_bonds_info = {}
-            bond = client.instruments.bond_by(
-                id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_FIGI,
-                id=figi
-            ).instrument
-            temp_dct_bonds_info['bond_figi'] = bond.figi
-            temp_dct_bonds_info['ticker'] = bond.ticker
-            temp_dct_bonds_info['instrument_uid'] = bond.uid
-            temp_dct_bonds_info['instrument_type'] = 'bond'
-            temp_dct_bonds_info['bond_type'] = bond.bond_type.name
-            temp_dct_bonds_info['bond_name'] = bond.name
-            temp_dct_bonds_info['nominal'] = _parse_money_value(bond.nominal)
-            temp_dct_bonds_info['currency'] = bond.currency
-            temp_dct_bonds_info['sector'] = bond.sector
-            temp_dct_bonds_info['maturity_date'] = bond.maturity_date.date()
-            temp_dct_bonds_info['coupon_quantity_per_year'] = bond.coupon_quantity_per_year
-            temp_dct_bonds_info['first_purchase_date'] = min(bond_first_purchase[figi]).date()
-            temp_dct_bonds_info['is_in_portfolio'] = True if figi in bonds_figi_in_portfolio else False
+        execute_values(db.cursor, q2, rows)
 
-            bonds.append(temp_dct_bonds_info)
+@task
+def update_coupons_payments_status():
+    SQL_FILE = Path(__file__).parent.parent / "sql" / "query_coupons_payments_status.sql"
+    db.insert(SQL_FILE.read_text(encoding="utf-8"))
 
-            # формирую инфо по купонам
-            coupon = client.instruments.get_bond_coupons(instrument_id=figi,
-                                                         from_=datetime(2000, 1, 1, tzinfo=timezone.utc),
-                                                         to=bond.maturity_date).events
-            if figi not in figi_in_db_lst:
-                for coup in coupon:
-                    temp_dct_coupon_info = {}
-                    temp_dct_coupon_info['bond_figi'] = coup.figi
-                    temp_dct_coupon_info['coupon_date'] = coup.coupon_date.date()
-                    temp_dct_coupon_info['coupon_type'] = coup.coupon_type.name
-                    temp_dct_coupon_info['pay_one_bond'] = _parse_money_value(coup.pay_one_bond)
-                    coupons.append(temp_dct_coupon_info)
+@task
+def start():
+    pass
 
-        # текущее состояние портфеля
-        current_positions = client.operations.get_portfolio(account_id=broker_account_info['id']).positions
-        my_portfolio = []
-        for pos in current_positions:
-            if pos.instrument_type == 'bond':
-                temp_dct_portfolio = {}
-                temp_dct_portfolio['bond_figi'] = pos.figi
-                temp_dct_portfolio['quantity'] = _parse_money_value(pos.quantity)
-                temp_dct_portfolio['average_price'] = _parse_money_value(pos.average_position_price)
-                temp_dct_portfolio['current_nkd'] = _parse_money_value(pos.current_nkd)
-                temp_dct_portfolio['expected_yield'] = _parse_money_value(pos.expected_yield)
-                temp_dct_portfolio['current_price'] = _parse_money_value(pos.current_price)
-                temp_dct_portfolio['snapshot_date'] = TODAY.date()
-                my_portfolio.append(temp_dct_portfolio)
+@task
+def end():
+    pass
 
-db.insert_many('bonds', 'ods', bonds, conflict_col='bond_figi')
-db.insert_many('coupons', 'ods', coupons)
-db.insert_many('portfolio_snapshots', 'ods', my_portfolio, conflict_col=['snapshot_date', 'bond_figi'])
-db.insert_many('coupons_payments', 'ods', coupon_payments)
+default_args = {
+    "owner": "revyakindm",
+    "start_date": datetime(2026, 7, 19),
+    "retries": 1,
+    "retry_delay": timedelta(seconds=30)
+}
 
-SQL_FILE = Path(__file__).parent.parent / "sql" / "query_coupons_payments_status.sql"
-db.insert(SQL_FILE.read_text(encoding="utf-8"))
+with DAG(
+    dag_id="investment_tracker",
+    schedule="@once",
+    default_args=default_args,
+    catchup=False,
+    max_active_runs=1,
+) as dag:
+    (
+            start()
+            >> from_api_to_stg()
+            >> bonds_from_stg_to_ods()
+            >> remaining_tables_to_ods()
+            >> update_coupons_payments_status()
+            >> end()
+    )
+
+# start()
+# from_api_to_stg()
+# bonds_from_stg_to_ods()
+# remaining_tables_to_ods()
+# update_coupons_payments_status()
+# end()
+
+# db.insert_many('bonds', 'ods', bonds, conflict_col='bond_figi')
+# db.insert_many('coupons', 'ods', coupons)
+# db.insert_many('portfolio_snapshots', 'ods', my_portfolio, conflict_col=['snapshot_date', 'bond_figi'])
+# db.insert_many('coupons_payments', 'ods', coupon_payments)
+
