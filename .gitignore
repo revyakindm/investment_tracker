@@ -4,3 +4,6 @@
 training.py
 config
 logs
+generate_roadmap.py
+roadmap_de.xlsx
+~$roadmap_de.xlsx
