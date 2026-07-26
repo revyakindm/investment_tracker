@@ -200,6 +200,10 @@ def from_api_to_stg(**context):
         db.insert_many('bonds', 'stg', bonds, conflict_col='bond_figi')
         db.insert_many('coupons', 'stg', coupons)
         db.insert_many('portfolio_snapshots', 'stg', my_portfolio, conflict_col=['snapshot_date', 'bond_figi'])
+
+        log.info(f"coupon_payments count: {len(coupon_payments)}")
+        log.info(f"coupon_payments content: {coupon_payments}")
+        log.info(f"autocommit: {db.connection.autocommit}")
         db.insert_many('coupons_payments', 'stg', coupon_payments)
     finally:
         db.connection.close()
@@ -259,7 +263,7 @@ default_args = {
 
 with DAG(
     dag_id="investment_tracker",
-    schedule="@once",
+    schedule="@daily",
     default_args=default_args,
     catchup=False,
     max_active_runs=1,
