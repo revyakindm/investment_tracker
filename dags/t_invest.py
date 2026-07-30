@@ -6,11 +6,10 @@ from t_tech.invest.schemas import InstrumentIdType
 import psycopg2
 from psycopg2.extras import execute_values
 
-from pathlib import Path
-
 from airflow import DAG
 from airflow.hooks.base import BaseHook
 from airflow.decorators import task
+from airflow.providers.standard.operators.bash import BashOperator
 
 import logging
 log = logging.getLogger("airflow.task")
@@ -214,7 +213,7 @@ def bonds_from_stg_to_ods():
     try:
         q = """select * from stg.bonds"""
         rows, columns = db.fetch(q, 'all')
-        db.insert_many('bonds', 'ods',None,'bond_figi', columns, rows)
+        db.insert_many('bonds', 'ods', None, 'bond_figi', columns, rows)
     finally:
         db.connection.close()
 
@@ -234,15 +233,6 @@ def remaining_tables_to_ods():
         db.insert_many('portfolio_snapshots', 'ods', None, ['snapshot_date', 'bond_figi'],
                        columns_portfolio_snapshots, rows_portfolio_snapshots)
         db.insert_many('coupons_payments', 'ods', None, 'operation_id', columns_coupons_payments, rows_coupons_payments)
-    finally:
-        db.connection.close()
-
-@task
-def update_coupons_payments_status():
-    db = _db()
-    try:
-        SQL_FILE = Path(__file__).parent.parent / "sql" / "query_coupons_payments_status.sql"
-        db.select(SQL_FILE.read_text(encoding="utf-8"))
     finally:
         db.connection.close()
 
@@ -268,11 +258,15 @@ with DAG(
     catchup=False,
     max_active_runs=1,
 ) as dag:
+    update_coupons_payments_status = BashOperator(
+        task_id="update_coupons_payments_status",
+        bash_command="dbt run --project-dir /opt/airflow/dbt_project --profiles-dir /opt/airflow/dbt_project",
+    )
     (
             start()
             >> from_api_to_stg()
             >> bonds_from_stg_to_ods()
             >> remaining_tables_to_ods()
-            >> update_coupons_payments_status()
+            >> update_coupons_payments_status
             >> end()
     )
