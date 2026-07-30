@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: 'coupons_payments_status'
+    description: 'Витрина статусов по выплатам купонов. Одна запись на выплату.'
+    columns:
+      - name: bond_figi
+        tests: [not_null]
+      - name: planned_payment_date
+        tests: [not_null]

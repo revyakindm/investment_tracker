@@ -1,0 +1,12 @@
+dbt_project:
+  outputs:
+    dev:
+      dbname: investment_tracker
+      host: my_db
+      pass: "{{ env_var('POSTGRES_PASSWORD') }}"
+      port: 5432
+      schema: mart
+      threads: 4
+      type: postgres
+      user: rda
+  target: dev

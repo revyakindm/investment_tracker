@@ -1,0 +1,9 @@
+version: 2
+
+sources:
+  - name: ods
+    schema: ods
+    tables:
+      - name: bonds
+      - name: coupons
+      - name: coupons_payments
