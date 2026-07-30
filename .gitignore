@@ -7,3 +7,7 @@ logs
 generate_roadmap.py
 roadmap_de.xlsx
 ~$roadmap_de.xlsx
+t_invest.py
+dbt_project/target/
+dbt_project/dbt_packages/
+dbt_project/logs/
