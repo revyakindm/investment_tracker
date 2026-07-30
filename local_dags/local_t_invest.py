@@ -192,7 +192,7 @@
 # db.insert_many('portfolio_snapshots', 'ods', my_portfolio, conflict_col=['snapshot_date', 'bond_figi'])
 # db.insert_many('coupons_payments', 'ods', coupon_payments)
 #
-# SQL_FILE = Path(__file__).parent.parent / "sql" / "query_coupons_payments_status.sql"
+# SQL_FILE = Path(__file__).parent.parent / "sql" / "coupons_payments_status.sql"
 # db.insert(SQL_FILE.read_text(encoding="utf-8"))
 
 import os
@@ -536,7 +536,7 @@ print(_columns, _columns_rows, val, sep='\n\n')
 # def update_coupons_payments_status():
 #     db = _db()
 #     try:
-#         SQL_FILE = Path(__file__).parent.parent / "sql" / "query_coupons_payments_status.sql"
+#         SQL_FILE = Path(__file__).parent.parent / "sql" / "coupons_payments_status.sql"
 #         db.select(SQL_FILE.read_text(encoding="utf-8"))
 #     finally:
 #         db.connection.close()
