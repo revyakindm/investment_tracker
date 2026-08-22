@@ -10,3 +10,6 @@ roadmap_de.xlsx
 dbt_project/target/
 dbt_project/dbt_packages/
 dbt_project/logs/
+CLAUDE.md
+dags/__pycache__/t_invest_dbt.cpython-311.pyc
+.claude/
