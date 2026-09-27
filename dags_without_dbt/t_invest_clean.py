@@ -241,7 +241,7 @@ def remaining_tables_to_ods():
 def update_coupons_payments_status():
     db = _db()
     try:
-        SQL_FILE = Path(__file__).parent.parent / "sql" / "query_coupons_payments_status_local.sql"
+        SQL_FILE = Path(__file__).parent.parent / "sql" / "query_coupons_payments_status.sql"
         db.select(SQL_FILE.read_text(encoding="utf-8"))
     finally:
         db.connection.close()

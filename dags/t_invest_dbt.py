@@ -86,11 +86,11 @@ def _db():
     )
 
 @task
-def from_api_to_stg(**context):
+def from_api_to_stg():
     config_t_invest = BaseHook.get_connection("t_invest_token")
     token = config_t_invest.password
 
-    today = context['data_interval_end']
+    today = datetime.now()
 
     db = _db()
 
@@ -143,7 +143,7 @@ def from_api_to_stg(**context):
 
                 bonds = []
                 coupons = []
-                for figi in ever_bought_figis:
+                for figi in ever_bought_figis | bonds_figi_in_portfolio:
                     # формирую инфо по облигациям
                     temp_dct_bonds_info = {}
                     bond = client.instruments.bond_by(
