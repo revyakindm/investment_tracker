@@ -13,3 +13,4 @@ dbt_project/logs/
 CLAUDE.md
 __pycache__/
 .claude/
+dags_local
